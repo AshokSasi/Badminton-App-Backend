@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const GroupPlayerController = require('./controller');
-// router.get('/', GroupPlayerController.getAllGroupPlayers);
-router.get('/:id', GroupPlayerController.getAllGroupPlayers);
+const PlayerController = require('./controller');
+const requireAuth = require('../middleware/auth.middleware');
+router.get('/groups', requireAuth, PlayerController.getUserGroups);
 module.exports = router;

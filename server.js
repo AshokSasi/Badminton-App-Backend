@@ -4,7 +4,7 @@ const express = require('express');
 const app = express();
 const sequelize = require('./database/database');
 const defineUser = require('./common/models/User');
-const User = defineUser(sequelize);
+const userRoutes = require('./players/routes');
 const authRoutes = require('./authorization/routes');
 const groupRoutes = require('./groups/routes');
 const sessionRoutes = require('./sessions/routes');
@@ -18,7 +18,8 @@ sequelize.sync().then(() => {
   console.error('Error syncing database:', err);
 });
 
-app.use('/users', authRoutes);
+app.use('/auth', authRoutes);
+app.use('/users', userRoutes);
 app.use('/groups', groupRoutes);
 app.use('/sessions', sessionRoutes);
 app.use('/group-members', groupMembersRoutes);

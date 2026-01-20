@@ -1,5 +1,6 @@
-const jwt = require('jsonwebtoken')
-const JWT_SECRET = 'dev_secret_change_later'
+require('dotenv').config();
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET;
 
 function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization
@@ -11,7 +12,7 @@ function requireAuth(req, res, next) {
     const payload = jwt.verify(token, JWT_SECRET)
     req.userId = payload.userId
     next()
-  } catch {
+  } catch (err) {
     res.sendStatus(401)
   }
 }
