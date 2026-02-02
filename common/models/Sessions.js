@@ -8,7 +8,7 @@ const SessionModel = {
   start_time: { type: DataTypes.STRING, allowNull: false },
   end_time: { type: DataTypes.STRING, allowNull: false },
   ended_at: { type: DataTypes.STRING, allowNull: true },
-  group_id: { type: DataTypes.INTEGER, references: {model: 'group', key: 'id'} }
+  group_id: { type: DataTypes.INTEGER, references: {model: 'group', key: 'id'} },
 };
 
 module.exports = (sequelize) => sequelize.define('session', SessionModel);

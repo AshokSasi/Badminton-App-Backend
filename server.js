@@ -8,6 +8,7 @@ const userRoutes = require('./players/routes');
 const authRoutes = require('./authorization/routes');
 const groupRoutes = require('./groups/routes');
 const sessionRoutes = require('./sessions/routes');
+const matchRoutes = require('./matches/routes');
 const groupMembersRoutes = require('./group_players/routes');
 app.use(express.json());
 const cors = require('cors');
@@ -23,6 +24,7 @@ app.use('/users', userRoutes);
 app.use('/groups', groupRoutes);
 app.use('/sessions', sessionRoutes);
 app.use('/group-members', groupMembersRoutes);
+app.use('/matches', matchRoutes);
 app.get('/status', (req, res) => {
   res.json({
     status: 'Running',
