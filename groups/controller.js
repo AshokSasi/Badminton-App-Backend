@@ -13,7 +13,7 @@ const defineGroup = require("../common/models/Group");
 const defineUser = require("../common/models/User");
 // const Group = defineGroup(sequelize);
 // const User = defineUser(sequelize);
-const { Group, User, Sessions, GroupPlayers, GroupJoinRequests } = require("../common/models");
+const { Group, User, Sessions, GroupPlayers, GroupJoinRequests, Matches, MatchCourts, MatchTeams, MatchTeamPlayers } = require("../common/models");
 
 // Get all join requests for the logged-in user
 exports.getUserJoinRequests = async (req, res) => {
@@ -250,6 +250,118 @@ exports.updateJoinRequestStatus = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Join request status updated" });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+exports.getGroupLeaderboard = async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`[getGroupLeaderboard] Fetching leaderboard for group ${id}`);
+    
+    // Verify group exists
+    const group = await Group.findByPk(id);
+    if (!group) {
+      return res.status(404).json({ success: false, error: "Group not found" });
+    }
+    
+    // Get all sessions for this group
+    const sessions = await Sessions.findAll({
+      where: { group_id: id },
+      attributes: ['id']
+    });
+    
+    const sessionIds = sessions.map(s => s.id);
+    
+    if (sessionIds.length === 0) {
+      return res.status(200).json({ 
+        success: true, 
+        data: [],
+        message: "No sessions found for this group"
+      });
+    }
+    
+    // Get all matches for these sessions
+    const matches = await Matches.findAll({
+      where: { session_id: sessionIds },
+      include: [{
+        model: MatchCourts,
+        as: 'courts',
+        include: [{
+          model: MatchTeams,
+          as: 'teams',
+          include: [{
+            model: MatchTeamPlayers,
+            as: 'players',
+            include: [{
+              model: User,
+              as: 'user',
+              attributes: ['id', 'name', 'email']
+            }]
+          }]
+        }]
+      }]
+    });
+    
+    // Aggregate stats per player
+    const playerStats = {};
+    
+    matches.forEach(match => {
+      match.courts.forEach(court => {
+        court.teams.forEach(team => {
+          team.players.forEach(player => {
+            const userId = player.user_id;
+            
+            if (!playerStats[userId]) {
+              playerStats[userId] = {
+                user_id: userId,
+                name: player.user.name,
+                email: player.user.email,
+                wins: 0,
+                losses: 0,
+                matches_played: 0
+              };
+            }
+            
+            // Only count if match has results
+            if (team.won !== null) {
+              playerStats[userId].matches_played++;
+              if (team.won === 1) {
+                playerStats[userId].wins++;
+              } else {
+                playerStats[userId].losses++;
+              }
+            }
+          });
+        });
+      });
+    });
+    
+    // Convert to array and calculate win percentage
+    const leaderboard = Object.values(playerStats).map(player => ({
+      ...player,
+      win_percentage: player.matches_played > 0 
+        ? ((player.wins / player.matches_played) * 100).toFixed(1)
+        : 0
+    }));
+    
+    // Sort by wins (descending), then by win percentage
+    leaderboard.sort((a, b) => {
+      if (b.wins !== a.wins) {
+        return b.wins - a.wins;
+      }
+      return parseFloat(b.win_percentage) - parseFloat(a.win_percentage);
+    });
+    
+    console.log(`[getGroupLeaderboard] Generated leaderboard with ${leaderboard.length} players`);
+    
+    res.status(200).json({
+      success: true,
+      data: leaderboard
+    });
+    
+  } catch (err) {
+    console.error(`[getGroupLeaderboard] Error: ${err.message}`, err);
     res.status(500).json({ success: false, error: err.message });
   }
 };

@@ -3,6 +3,7 @@ const SessionController = require('./controller');
 const requireAuth = require('../middleware/auth.middleware');
 
 router.get('/:sessionId/check-user', requireAuth, SessionController.checkUserInSession);
+router.get('/:id', requireAuth, SessionController.getSessionById);
 router.post('/:sessionId/join', requireAuth, SessionController.joinSession);
 router.post('/:id/join', requireAuth, SessionController.joinSession);
 router.post('/', requireAuth, SessionController.createSession);

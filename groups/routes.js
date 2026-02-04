@@ -7,6 +7,7 @@ router.get('/', requireAuth, GroupController.getAllGroups);
 router.get('/:id', requireAuth, GroupController.getGroupById);
 router.get('/:id/members', requireAuth, GroupController.getGroupMembers);
 router.get('/:id/role', requireAuth, GroupController.getUserRoleInGroup);
+router.get('/:id/leaderboard', requireAuth, GroupController.getGroupLeaderboard);
 // SESSIONS
 router.get('/:group_id/sessions', requireAuth, GroupController.getSessionsByGroupId);
 
