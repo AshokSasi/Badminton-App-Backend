@@ -7,8 +7,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      # Mount the database directory as a volume to persist data
-      - ./database:/app/database
+      # Mount the database directory with absolute path to persist data across deployments
+      - /home/ashok/badminton-database:/app/database
     env_file:
       - .env
     environment:

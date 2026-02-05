@@ -72,6 +72,10 @@ migrations/*
 # SQLite database files
 *.sqlite
 *.sqlite3
+*.db
+database/*.db
+database/*.sqlite
+database/*.sqlite3
 
 # VS Code settings
 .vscode/
