@@ -3,7 +3,16 @@ const defineSession = require('../common/models/Sessions');
 const defineSessionPlayers = require('../common/models/SessionPlayers');
 const defineUser = require('../common/models/User');
 
-const { Sessions, User, SessionPlayers, Matches, MatchCourts, MatchTeams, MatchTeamPlayers } = require('../common/models');
+const { Sessions, User, SessionPlayers, Matches, MatchCourts, MatchTeams, MatchTeamPlayers, Group } = require('../common/models');
+
+// Load push notification service if available
+let sendNotificationToGroup = null;
+try {
+  const pushService = require('../common/pushNotificationService');
+  sendNotificationToGroup = pushService.sendNotificationToGroup;
+} catch (error) {
+  console.log('Push notification service not available');
+}
 
 exports.getSessionById = async (req, res) => {
   try {
@@ -86,9 +95,10 @@ exports.joinSession = async (req, res) => {
 
 exports.createSession = async (req, res) => {
   try {
-    console.log('req.params:', req.body);
-    console.log('Sessions:', Sessions);
+    console.log('[createSession] Starting - Request body:', req.body);
     const { date, location, size, start_time, end_time, ended_at, group_id } = req.body;
+    
+    console.log('[createSession] Creating session...');
     const session = await Sessions.create({
       date,
       location,
@@ -98,11 +108,59 @@ exports.createSession = async (req, res) => {
       ended_at,
       group_id
     });
+    console.log('[createSession] Session created:', session.id);
+
+    // Send push notifications to all group members
+    if (group_id && sendNotificationToGroup) {
+      // Run notifications in background - don't block response
+      setImmediate(async () => {
+        try {
+          // Only send notifications if VAPID keys are configured
+          if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+            // Get group details for notification
+            const group = await Group.findByPk(group_id);
+            const groupName = group ? group.name : 'Your group';
+            
+            const notificationPayload = {
+              title: 'New Session Created! 🏸',
+              body: `A new badminton session has been created in ${groupName}`,
+              data: {
+                type: 'new_session',
+                session_id: session.id,
+                group_id: group_id,
+                location: location,
+                start_time: start_time,
+                url: `/sessions/${session.id}` // Your frontend route
+              },
+              icon: '/icon-192x192.png', // Add your app icon path
+              badge: '/badge-72x72.png' // Add your badge icon path
+            };
+
+            // Send notifications asynchronously (don't wait for completion)
+            sendNotificationToGroup(group_id, notificationPayload)
+              .then(result => {
+                console.log(`Session ${session.id} notifications sent: ${result.totalSent} successful, ${result.totalFailed} failed`);
+              })
+              .catch(error => {
+                console.error(`Error sending notifications for session ${session.id}:`, error);
+              });
+          } else {
+            console.log('Push notifications not configured - skipping notification sending');
+          }
+        } catch (notificationError) {
+          console.error('Error preparing push notifications:', notificationError);
+        }
+      });
+    }
+
+    console.log('[createSession] Sending response...');
     res.status(201).json({
       success: true,
       data: { id: session.id, date: session.date, location: session.location, size: session.size, start_time: session.start_time, end_time: session.end_time, ended_at: session.ended_at, group_id: session.group_id }
     });
+    console.log('[createSession] Response sent successfully');
   } catch (err) {
+    console.error('[createSession] ERROR:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 };

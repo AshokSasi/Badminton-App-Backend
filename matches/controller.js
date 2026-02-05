@@ -81,12 +81,18 @@ exports.generateMatch = async (req, res) => {
       });
     }
     
-    // SIMPLE RANDOM ASSIGNMENT - shuffle players and assign sequentially
-    const shuffledPlayers = [...eligiblePlayers].sort(() => Math.random() - 0.5);
+    // SIMPLE RANDOM ASSIGNMENT - Fisher-Yates shuffle for true randomness
+    const shuffledPlayers = [...eligiblePlayers];
+    for (let i = shuffledPlayers.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffledPlayers[i], shuffledPlayers[j]] = [shuffledPlayers[j], shuffledPlayers[i]];
+    }
+    
     const totalPlayersNeeded = actualCourts * playersPerCourt;
     const selectedPlayers = shuffledPlayers.slice(0, totalPlayersNeeded);
     
     console.log(`[generateMatch] Selected ${selectedPlayers.length} players randomly`);
+    console.log(`[generateMatch] Player order: ${selectedPlayers.map(p => p.player_id).join(', ')}`);
     
     const assignedPlayers = [];
     for (let court = 0; court < actualCourts; court++) {
@@ -97,6 +103,8 @@ exports.generateMatch = async (req, res) => {
         teamA: courtPlayers.slice(0, playersPerTeam).map(ep => ep.player_id),
         teamB: courtPlayers.slice(playersPerTeam).map(ep => ep.player_id)
       });
+      
+      console.log(`[generateMatch] Court ${court + 1} - Team A: [${assignedPlayers[court].teamA}], Team B: [${assignedPlayers[court].teamB}]`);
     }
     
     console.log(`[generateMatch] Random assignment completed`);

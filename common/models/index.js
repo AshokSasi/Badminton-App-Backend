@@ -11,6 +11,14 @@ const defineMatchCourts = require('./MatchCourts');
 const defineMatchTeams = require('./MatchTeams');
 const defineMatchTeamPlayers = require('./MatchTeamPlayers');
 
+// PushSubscription model - optional (requires web-push)
+let definePushSubscription = null;
+try {
+  definePushSubscription = require('./PushSubscription');
+} catch (error) {
+  console.log('PushSubscription model not loaded - web-push not installed');
+}
+
 const Group = defineGroup(sequelize);
 const User = defineUser(sequelize);
 const GroupPlayers = defineGroupPlayers(sequelize);
@@ -22,6 +30,7 @@ const MatchPlayers = defineMatchPlayers(sequelize);
 const MatchCourts = defineMatchCourts(sequelize);
 const MatchTeams = defineMatchTeams(sequelize);
 const MatchTeamPlayers = defineMatchTeamPlayers(sequelize);
+const PushSubscription = definePushSubscription ? definePushSubscription(sequelize) : null;
 // Associations
 Group.belongsToMany(User, { through: GroupPlayers, foreignKey: 'group_id', otherKey: 'player_id' });
 User.belongsToMany(Group, { through: GroupPlayers, foreignKey: 'player_id', otherKey: 'group_id' });
@@ -71,6 +80,12 @@ Matches.hasMany(MatchPlayers, { foreignKey: 'match_id' });
 MatchPlayers.belongsTo(User, { as: 'player', foreignKey: 'player_id' });
 User.hasMany(MatchPlayers, { foreignKey: 'player_id' });
 
+// PushSubscription associations (optional)
+if (PushSubscription) {
+  PushSubscription.belongsTo(User, { foreignKey: 'user_id' });
+  User.hasMany(PushSubscription, { foreignKey: 'user_id' });
+}
+
 module.exports = { 
   Group, 
   User, 
@@ -82,5 +97,6 @@ module.exports = {
   MatchPlayers, 
   MatchCourts, 
   MatchTeams, 
-  MatchTeamPlayers 
+  MatchTeamPlayers,
+  PushSubscription
 };
