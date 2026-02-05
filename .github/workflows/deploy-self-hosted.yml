@@ -16,12 +16,23 @@ jobs:
 
       - name: Setup environment file
         run: |
+          echo "📍 Current directory: $(pwd)"
+          echo "📋 Checking for persistent .env file..."
+          
           # Copy .env from persistent location
           if [ -f /home/ashok/Badminton-App-Backend/.env ]; then
             cp /home/ashok/Badminton-App-Backend/.env .env
             echo "✅ .env file copied"
+            
+            # Verify the copy
+            echo "📝 Checking copied .env content:"
+            if grep -q "VAPID_PUBLIC_KEY" .env; then
+              echo "✅ VAPID_PUBLIC_KEY found in .env"
+            else
+              echo "❌ VAPID_PUBLIC_KEY not found in .env"
+            fi
           else
-            echo "❌ .env file not found"
+            echo "❌ .env file not found at /home/ashok/Badminton-App-Backend/.env"
             exit 1
           fi
 
@@ -52,6 +63,15 @@ jobs:
           
           # Check container status
           docker-compose ps
+          
+          # Verify environment variables in container
+          echo "🔍 Checking environment variables in container:"
+          if docker exec badminton-backend printenv | grep -q "VAPID_PUBLIC_KEY"; then
+            echo "✅ VAPID_PUBLIC_KEY is set in container"
+            docker exec badminton-backend printenv | grep "VAPID_PUBLIC_KEY=" | sed 's/\(VAPID_PUBLIC_KEY=.\{20\}\).*/\1.../'
+          else
+            echo "❌ VAPID_PUBLIC_KEY not found in container!"
+          fi
           
           # Check container health
           if docker inspect --format='{{.State.Health.Status}}' badminton-backend 2>/dev/null | grep -q "healthy"; then
