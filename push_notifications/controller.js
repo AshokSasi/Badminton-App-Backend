@@ -1,5 +1,5 @@
 const { PushSubscription } = require('../common/models');
-const { getVapidPublicKey, sendNotificationToUser } = require('../common/pushNotificationService');
+const { getVapidPublicKey } = require('../common/pushNotificationService');
 
 /**
  * Get VAPID public key for client-side subscription
@@ -143,75 +143,6 @@ exports.getUserSubscriptions = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message
-    });
-  }
-};
-
-/**
- * Test notification - sends a test push to the authenticated user
- */
-exports.testNotification = async (req, res) => {
-  try {
-    const userId = req.userId;
-    
-    console.log(`\n=== TEST NOTIFICATION ===`);
-    console.log(`User ID: ${userId}`);
-    console.log(`Time: ${new Date().toISOString()}`);
-    
-    // Check subscriptions
-    const subscriptions = await PushSubscription.findAll({
-      where: { user_id: userId }
-    });
-    
-    console.log(`Found ${subscriptions.length} subscription(s)`);
-    subscriptions.forEach((sub, idx) => {
-      console.log(`  [${idx + 1}] Endpoint: ${sub.endpoint.substring(0, 60)}...`);
-      console.log(`      Has p256dh: ${!!sub.p256dh}`);
-      console.log(`      Has auth: ${!!sub.auth}`);
-    });
-    
-    if (subscriptions.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'No push subscriptions found for your account. Please subscribe first.'
-      });
-    }
-    
-    // Send test notification
-    const payload = {
-      title: '🎾 Test Notification',
-      body: 'If you see this, push notifications are working! 🎉',
-      icon: '/icon-192.png',
-      badge: '/badge-72.png',
-      tag: 'test-notification',
-      data: {
-        test: true,
-        timestamp: Date.now(),
-        url: '/'
-      }
-    };
-    
-    console.log(`Sending notification...`);
-    const result = await sendNotificationToUser(userId, payload);
-    console.log(`Result: ${result.sent} sent, ${result.failed} failed`);
-    console.log(`=== END TEST ===\n`);
-    
-    res.status(200).json({
-      success: true,
-      message: 'Test notification sent',
-      result: {
-        subscriptions: subscriptions.length,
-        sent: result.sent,
-        failed: result.failed
-      }
-    });
-  } catch (error) {
-    console.error('Test notification error:', error);
-    console.error('Stack:', error.stack);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      details: error.stack
     });
   }
 };

@@ -53,16 +53,16 @@ jobs:
           # Check container status
           docker-compose ps
           
-          # Verify environment variables in container
-          echo "🔍 Checking environment variables in container:"
-          if docker exec badminton-backend printenv | grep -q "VAPID_PUBLIC_KEY"; then
-            echo "✅ VAPID_PUBLIC_KEY is set in container"
-            docker exec badminton-backend printenv | grep "VAPID_PUBLIC_KEY=" | sed 's/\(VAPID_PUBLIC_KEY=.\{20\}\).*/\1.../'
-          else
-            echo "❌ VAPID_PUBLIC_KEY not found in container!"
-          fi
-          
           # Check container health
           if docker inspect --format='{{.State.Health.Status}}' badminton-backend 2>/dev/null | grep -q "healthy"; then
-            ho "📋 Container logs:"
+            echo "✅ Container is healthy!"
+          else
+            echo "⚠️  Container health check not available or container not healthy yet"
+            docker logs badminton-backend --tail 20
+          fi
+
+      - name: Show container logs on failure
+        if: failure()
+        run: |
+          echo "📋 Container logs:"
           docker logs badminton-backend --tail 50
