@@ -59,7 +59,6 @@ exports.generateMatch = async (req, res) => {
     // Determine match type based on request or default to doubles
     let matchType = match_type && (match_type === 'singles' || match_type === 'doubles') ? match_type : 'doubles';
     console.log(`[generateMatch] Match type set to: ${matchType}`);
-    console.log(`[generateMatch] Match type details - Value: "${matchType}", Type: ${typeof matchType}, Length: ${matchType.length}`);
     
     // Fallback to singles if not enough players for doubles
     if (matchType === 'doubles' && eligiblePlayers.length < 4) {
@@ -82,112 +81,25 @@ exports.generateMatch = async (req, res) => {
       });
     }
     
-    // Get match history for this session to enable smart matchmaking
-    const sessionHistory = await Matches.findAll({
-      where: { session_id },
-      include: [{
-        model: MatchCourts,
-        as: 'courts',
-        include: [{
-          model: MatchTeams,
-          as: 'teams',
-          include: [{
-            model: MatchTeamPlayers,
-            as: 'players'
-          }]
-        }]
-      }],
-      transaction: t
-    });
+    // SIMPLE RANDOM ASSIGNMENT - shuffle players and assign sequentially
+    const shuffledPlayers = [...eligiblePlayers].sort(() => Math.random() - 0.5);
+    const totalPlayersNeeded = actualCourts * playersPerCourt;
+    const selectedPlayers = shuffledPlayers.slice(0, totalPlayersNeeded);
     
-    // Build player statistics for smart matchmaking
-    const playerStats = {};
-    const partnerHistory = {}; // tracks who played together
-    const opponentHistory = {}; // tracks who played against each other
-    const recentMatches = {}; // tracks last 2 matches for each player
+    console.log(`[generateMatch] Selected ${selectedPlayers.length} players randomly`);
     
-    eligiblePlayers.forEach(ep => {
-      const playerId = ep.player_id;
-      playerStats[playerId] = { matchesPlayed: 0, lastMatchIndex: -1 };
-      partnerHistory[playerId] = {};
-      opponentHistory[playerId] = {};
-      recentMatches[playerId] = [];
-    });
-    
-    // Analyze match history
-    sessionHistory.forEach((match, matchIndex) => {
-      match.courts.forEach(court => {
-        const teams = { A: [], B: [] };
-        
-        court.teams.forEach(team => {
-          team.players.forEach(player => {
-            teams[team.team].push(player.user_id);
-          });
-        });
-        
-        // Track matches played for each player
-        [...teams.A, ...teams.B].forEach(playerId => {
-          if (playerStats[playerId]) {
-            playerStats[playerId].matchesPlayed++;
-            playerStats[playerId].lastMatchIndex = matchIndex;
-            recentMatches[playerId].push(matchIndex);
-            if (recentMatches[playerId].length > 2) {
-              recentMatches[playerId].shift();
-            }
-          }
-        });
-        
-        // Track partnerships (teammates)
-        if (teams.A.length > 1) {
-          for (let i = 0; i < teams.A.length; i++) {
-            for (let j = i + 1; j < teams.A.length; j++) {
-              const p1 = teams.A[i], p2 = teams.A[j];
-              if (partnerHistory[p1] && partnerHistory[p2]) {
-                partnerHistory[p1][p2] = (partnerHistory[p1][p2] || 0) + 1;
-                partnerHistory[p2][p1] = (partnerHistory[p2][p1] || 0) + 1;
-              }
-            }
-          }
-        }
-        if (teams.B.length > 1) {
-          for (let i = 0; i < teams.B.length; i++) {
-            for (let j = i + 1; j < teams.B.length; j++) {
-              const p1 = teams.B[i], p2 = teams.B[j];
-              if (partnerHistory[p1] && partnerHistory[p2]) {
-                partnerHistory[p1][p2] = (partnerHistory[p1][p2] || 0) + 1;
-                partnerHistory[p2][p1] = (partnerHistory[p2][p1] || 0) + 1;
-              }
-            }
-          }
-        }
-        
-        // Track opponents
-        teams.A.forEach(p1 => {
-          teams.B.forEach(p2 => {
-            if (opponentHistory[p1] && opponentHistory[p2]) {
-              opponentHistory[p1][p2] = (opponentHistory[p1][p2] || 0) + 1;
-              opponentHistory[p2][p1] = (opponentHistory[p2][p1] || 0) + 1;
-            }
-          });
-        });
+    const assignedPlayers = [];
+    for (let court = 0; court < actualCourts; court++) {
+      const courtPlayers = selectedPlayers.slice(court * playersPerCourt, (court + 1) * playersPerCourt);
+      const playersPerTeam = matchType === 'doubles' ? 2 : 1;
+      
+      assignedPlayers.push({
+        teamA: courtPlayers.slice(0, playersPerTeam).map(ep => ep.player_id),
+        teamB: courtPlayers.slice(playersPerTeam).map(ep => ep.player_id)
       });
-    });
+    }
     
-    console.log(`[generateMatch] Player stats:`, JSON.stringify(playerStats, null, 2));
-    
-    // Smart player assignment using weighted scoring
-    const assignedPlayers = smartPlayerAssignment(
-      eligiblePlayers,
-      playerStats,
-      partnerHistory,
-      opponentHistory,
-      recentMatches,
-      sessionHistory.length,
-      actualCourts,
-      matchType
-    );
-    
-    console.log(`[generateMatch] Smart assignment completed`);
+    console.log(`[generateMatch] Random assignment completed`);
     
     console.log(`[generateMatch] About to create match with match_type: "${matchType}"`);
     
