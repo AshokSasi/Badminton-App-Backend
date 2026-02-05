@@ -1,0 +1,103 @@
+name: Deploy to Personal Server (Advanced)
+
+on:
+  push:
+    branches:
+      - main  # Change to 'master' if that's your main branch
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests (if any)
+        run: npm test || echo "No tests configured"
+        continue-on-error: true
+
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy
+          rsync -av --exclude='node_modules' --exclude='.git' --exclude='deploy' ./ deploy/
+          tar -czf deploy.tar.gz -C deploy .
+          
+      - name: Copy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          source: "deploy.tar.gz"
+          target: "/tmp"
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+            
+            # Backup current deployment
+            if [ -d "${{ secrets.DEPLOY_PATH }}" ]; then
+              cp -r ${{ secrets.DEPLOY_PATH }} ${{ secrets.DEPLOY_PATH }}_backup_$(date +%Y%m%d_%H%M%S)
+            fi
+            
+            # Create deployment directory if it doesn't exist
+            mkdir -p ${{ secrets.DEPLOY_PATH }}
+            
+            # Extract new files
+            cd ${{ secrets.DEPLOY_PATH }}
+            tar -xzf /tmp/deploy.tar.gz
+            
+            # Install production dependencies
+            npm ci --production
+            
+            # Copy environment file if it exists
+            if [ -f "../.env" ]; then
+              cp ../.env .env
+            fi
+            
+            # Restart application
+            if command -v pm2 &> /dev/null; then
+              pm2 restart badminton-backend || pm2 start server.js --name badminton-backend
+            elif systemctl is-active --quiet badminton-backend; then
+              sudo systemctl restart badminton-backend
+            else
+              echo "Please restart your application manually"
+            fi
+            
+            # Clean up
+            rm /tmp/deploy.tar.gz
+            
+            echo "Deployment completed successfully!"
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl -f ${{ secrets.SERVER_URL }}/health || echo "Health check endpoint not available"
+        continue-on-error: true
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment successful!"
+          else
+            echo "❌ Deployment failed!"
+          fi

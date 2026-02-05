@@ -1,0 +1,176 @@
+name: Deploy Docker (Advanced - File Transfer)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create deployment archive
+        run: |
+          # Exclude unnecessary files
+          tar -czf deploy.tar.gz \
+            --exclude='node_modules' \
+            --exclude='.git' \
+            --exclude='database/*.db' \
+            --exclude='database/*.sqlite' \
+            .
+
+      - name: Copy files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          source: "deploy.tar.gz"
+          target: "/tmp"
+
+      - name: Deploy and rebuild Docker container
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+            
+            echo "🚀 Starting Docker deployment..."
+            
+            # Create backup of current deployment
+            if [ -d "${{ secrets.DEPLOY_PATH }}" ]; then
+              BACKUP_DIR="${{ secrets.DEPLOY_PATH }}_backup_$(date +%Y%m%d_%H%M%S)"
+              echo "📦 Creating backup at $BACKUP_DIR"
+              cp -r ${{ secrets.DEPLOY_PATH }} $BACKUP_DIR
+              
+              # Keep only last 3 backups
+              ls -dt ${{ secrets.DEPLOY_PATH }}_backup_* | tail -n +4 | xargs rm -rf 2>/dev/null || true
+            fi
+            
+            # Create deployment directory if it doesn't exist
+            mkdir -p ${{ secrets.DEPLOY_PATH }}
+            
+            # Stop current containers
+            cd ${{ secrets.DEPLOY_PATH }}
+            if [ -f "docker-compose.yml" ]; then
+              echo "🛑 Stopping existing containers..."
+              docker-compose down || true
+            fi
+            
+            # Backup database if it exists
+            if [ -d "database" ]; then
+              echo "💾 Backing up database..."
+              cp -r database database_backup_$(date +%Y%m%d_%H%M%S)
+              # Keep only last 5 database backups
+              ls -dt database_backup_* | tail -n +6 | xargs rm -rf 2>/dev/null || true
+            fi
+            
+            # Extract new files (preserve database)
+            echo "📂 Extracting new files..."
+            tar -xzf /tmp/deploy.tar.gz --exclude='database/*.db' --exclude='database/*.sqlite'
+            
+            # Ensure .env file exists
+            if [ ! -f ".env" ]; then
+              if [ -f "../.env" ]; then
+                cp ../.env .env
+              else
+                echo "⚠️  Warning: .env file not found!"
+              fi
+            fi
+            
+            # Build and start containers
+            echo "🔨 Building Docker image..."
+            docker-compose build --no-cache
+            
+            echo "🚀 Starting containers..."
+            docker-compose up -d
+            
+            # Clean up
+            rm /tmp/deploy.tar.gz
+            
+            # Clean up old images
+            echo "🧹 Cleaning up old images..."
+            docker image prune -f
+            
+            echo "✅ Deployment completed!"
+
+      - name: Health check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            echo "🏥 Performing health check..."
+            cd ${{ secrets.DEPLOY_PATH }}
+            
+            # Wait for container to start
+            sleep 15
+            
+            # Check container status
+            echo "Container status:"
+            docker-compose ps
+            
+            # Check if container is running
+            if docker ps | grep -q "badminton-backend"; then
+              echo "✅ Container is running!"
+              
+              # Check health status
+              HEALTH=$(docker inspect --format='{{.State.Health.Status}}' badminton-backend 2>/dev/null || echo "no-healthcheck")
+              echo "Health status: $HEALTH"
+              
+              # Show recent logs
+              echo ""
+              echo "📋 Recent logs:"
+              docker logs badminton-backend --tail 20
+              
+            else
+              echo "❌ Container is not running!"
+              echo "📋 Container logs:"
+              docker logs badminton-backend --tail 50 2>/dev/null || echo "No logs available"
+              exit 1
+            fi
+
+      - name: Rollback on failure
+        if: failure()
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            echo "⚠️  Deployment failed! Rolling back..."
+            cd ${{ secrets.DEPLOY_PATH }}
+            
+            # Get the most recent backup
+            LATEST_BACKUP=$(ls -dt ${{ secrets.DEPLOY_PATH }}_backup_* 2>/dev/null | head -n 1)
+            
+            if [ -n "$LATEST_BACKUP" ]; then
+              echo "📦 Restoring from backup: $LATEST_BACKUP"
+              
+              # Stop current containers
+              docker-compose down || true
+              
+              # Restore backup
+              rm -rf ${{ secrets.DEPLOY_PATH }}/*
+              cp -r $LATEST_BACKUP/* ${{ secrets.DEPLOY_PATH }}/
+              
+              # Restart containers
+              cd ${{ secrets.DEPLOY_PATH }}
+              docker-compose up -d
+              
+              echo "✅ Rollback completed!"
+            else
+              echo "❌ No backup found for rollback!"
+            fi
