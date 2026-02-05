@@ -130,7 +130,7 @@ exports.createSession = async (req, res) => {
                 group_id: group_id,
                 location: location,
                 start_time: start_time,
-                url: `/groups/GroupDetails/${group_id}` // Navigate to group details page
+                url: `/group/GroupDetails/${group_id}` // Navigate to group details page
               },
               icon: '/icon-192x192.png', // Add your app icon path
               badge: '/badge-72x72.png' // Add your badge icon path
