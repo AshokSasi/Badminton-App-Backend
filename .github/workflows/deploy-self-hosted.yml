@@ -16,23 +16,12 @@ jobs:
 
       - name: Setup environment file
         run: |
-          echo "📍 Current directory: $(pwd)"
-          echo "📋 Checking for persistent .env file..."
-          
           # Copy .env from persistent location
           if [ -f /home/ashok/Badminton-App-Backend/.env ]; then
             cp /home/ashok/Badminton-App-Backend/.env .env
             echo "✅ .env file copied"
-            
-            # Verify the copy
-            echo "📝 Checking copied .env content:"
-            if grep -q "VAPID_PUBLIC_KEY" .env; then
-              echo "✅ VAPID_PUBLIC_KEY found in .env"
-            else
-              echo "❌ VAPID_PUBLIC_KEY not found in .env"
-            fi
           else
-            echo "❌ .env file not found at /home/ashok/Badminton-App-Backend/.env"
+            echo "❌ .env file not found"
             exit 1
           fi
 
@@ -75,14 +64,5 @@ jobs:
           
           # Check container health
           if docker inspect --format='{{.State.Health.Status}}' badminton-backend 2>/dev/null | grep -q "healthy"; then
-            echo "✅ Container is healthy!"
-          else
-            echo "⚠️  Container health check not available or container not healthy yet"
-            docker logs badminton-backend --tail 20
-          fi
-
-      - name: Show container logs on failure
-        if: failure()
-        run: |
-          echo "📋 Container logs:"
+            ho "📋 Container logs:"
           docker logs badminton-backend --tail 50
