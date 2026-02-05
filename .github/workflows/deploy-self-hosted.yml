@@ -1,0 +1,68 @@
+name: Deploy Docker (Self-Hosted)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup environment file
+        run: |
+          # Copy .env from persistent location
+          if [ -f /home/ashok/Badminton-App-Backend/.env ]; then
+            cp /home/ashok/Badminton-App-Backend/.env .env
+            echo "✅ .env file copied"
+          else
+            echo "❌ .env file not found"
+            exit 1
+          fi
+
+      - name: Deploy with Docker Compose
+        run: |
+          set -e
+          
+          echo "🚀 Starting deployment..."
+          
+          # Stop existing containers
+          docker-compose down || true
+          
+          # Build fresh
+          docker-compose build --no-cache
+          
+          # Start containers
+          docker-compose up -d
+          
+          # Clean up unused images
+          docker image prune -f
+          
+          echo "✅ Docker deployment completed!"
+
+      - name: Wait for container to be healthy
+        run: |
+          echo "⏳ Waiting for container to be healthy..."
+          sleep 10
+          
+          # Check container status
+          docker-compose ps
+          
+          # Check container health
+          if docker inspect --format='{{.State.Health.Status}}' badminton-backend 2>/dev/null | grep -q "healthy"; then
+            echo "✅ Container is healthy!"
+          else
+            echo "⚠️  Container health check not available or container not healthy yet"
+            docker logs badminton-backend --tail 20
+          fi
+
+      - name: Show container logs on failure
+        if: failure()
+        run: |
+          echo "📋 Container logs:"
+          docker logs badminton-backend --tail 50
