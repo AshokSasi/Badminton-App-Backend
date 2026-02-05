@@ -447,21 +447,25 @@ function calculateOpponentScore(p1, p2, opponentHistory, recentMatches, currentM
 function calculateDoublesMatchScore(teamA, teamB, partnerHistory, opponentHistory, recentMatches, currentMatchIndex) {
   let score = 100;
   
-  // Partner diversity within teams
+  // Partner diversity within teams - MUCH HIGHER PENALTY for repeated partners
   const teamAPartnerCount = partnerHistory[teamA[0]]?.[teamA[1]] || 0;
   const teamBPartnerCount = partnerHistory[teamB[0]]?.[teamB[1]] || 0;
-  score -= (teamAPartnerCount + teamBPartnerCount) * 15;
+  score -= (teamAPartnerCount + teamBPartnerCount) * 40; // Increased from 15 to 40
   
-  // Opponent diversity across teams
+  // Exponential penalty for playing with same partner multiple times
+  if (teamAPartnerCount >= 2) score -= teamAPartnerCount * 30;
+  if (teamBPartnerCount >= 2) score -= teamBPartnerCount * 30;
+  
+  // Opponent diversity across teams - HIGHER PENALTY
   let opponentCount = 0;
   teamA.forEach(p1 => {
     teamB.forEach(p2 => {
       opponentCount += opponentHistory[p1]?.[p2] || 0;
     });
   });
-  score -= opponentCount * 10;
+  score -= opponentCount * 25; // Increased from 10 to 25
   
-  // Penalty for recent pairings (partners or opponents)
+  // SEVERE penalty for recent pairings (partners or opponents)
   const allPlayers = [...teamA, ...teamB];
   const allPlayedRecently = allPlayers.every(p => {
     const recent = recentMatches[p] || [];
@@ -469,8 +473,12 @@ function calculateDoublesMatchScore(teamA, teamB, partnerHistory, opponentHistor
   });
   
   if (allPlayedRecently && (teamAPartnerCount > 0 || teamBPartnerCount > 0 || opponentCount > 0)) {
-    score -= 40;
+    score -= 100; // Increased from 40 to 100
   }
+  
+  // Bonus for new pairings (never played together)
+  if (teamAPartnerCount === 0) score += 50;
+  if (teamBPartnerCount === 0) score += 50;
   
   return score;
 }
