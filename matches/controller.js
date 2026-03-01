@@ -328,16 +328,16 @@ function smartPlayerAssignment(eligiblePlayers, playerStats, partnerHistory, opp
 /**
  * Assign players for singles matches
  * Prioritizes opponent diversity and avoids recent opponents
+ * Uses randomization for tie-breaking to ensure variety
  */
 function assignSinglesMatches(players, opponentHistory, recentMatches, currentMatchIndex, courtsNeeded) {
   const assignments = [];
   const used = new Set();
   
   for (let court = 0; court < courtsNeeded && used.size < players.length - 1; court++) {
-    let bestPair = null;
-    let bestScore = -Infinity;
+    const candidates = [];
     
-    // Try all possible pairs
+    // Try all possible pairs and collect all with their scores
     for (let i = 0; i < players.length; i++) {
       if (used.has(players[i])) continue;
       
@@ -347,21 +347,30 @@ function assignSinglesMatches(players, opponentHistory, recentMatches, currentMa
         const p1 = players[i], p2 = players[j];
         const score = calculateOpponentScore(p1, p2, opponentHistory, recentMatches, currentMatchIndex);
         
-        if (score > bestScore) {
-          bestScore = score;
-          bestPair = [p1, p2];
-        }
+        candidates.push({ pair: [p1, p2], score });
       }
     }
     
-    if (bestPair) {
-      assignments.push({
-        teamA: [bestPair[0]],
-        teamB: [bestPair[1]]
-      });
-      used.add(bestPair[0]);
-      used.add(bestPair[1]);
-    }
+    if (candidates.length === 0) break;
+    
+    // Find the best score
+    const bestScore = Math.max(...candidates.map(c => c.score));
+    
+    // Get all candidates within 10 points of the best score (for tie-breaking)
+    const tieBreakThreshold = 10;
+    const topCandidates = candidates.filter(c => c.score >= bestScore - tieBreakThreshold);
+    
+    // Randomly select from top candidates to add variety
+    const selectedPair = topCandidates[Math.floor(Math.random() * topCandidates.length)];
+    
+    console.log(`[assignSinglesMatches] Court ${court + 1}: ${candidates.length} pairs, ${topCandidates.length} within threshold, selected score: ${selectedPair.score.toFixed(1)}`);
+    
+    assignments.push({
+      teamA: [selectedPair.pair[0]],
+      teamB: [selectedPair.pair[1]]
+    });
+    used.add(selectedPair.pair[0]);
+    used.add(selectedPair.pair[1]);
   }
   
   return assignments;
@@ -370,16 +379,16 @@ function assignSinglesMatches(players, opponentHistory, recentMatches, currentMa
 /**
  * Assign players for doubles matches
  * Prioritizes partner diversity, opponent diversity, and avoids recent pairings
+ * Uses randomization for tie-breaking to ensure variety
  */
 function assignDoublesMatches(players, partnerHistory, opponentHistory, recentMatches, currentMatchIndex, courtsNeeded) {
   const assignments = [];
   const used = new Set();
   
   for (let court = 0; court < courtsNeeded && used.size <= players.length - 4; court++) {
-    let bestMatch = null;
-    let bestScore = -Infinity;
+    const candidates = [];
     
-    // Try different team combinations
+    // Try different team combinations and collect all with their scores
     for (let i = 0; i < players.length - 3; i++) {
       if (used.has(players[i])) continue;
       
@@ -399,20 +408,33 @@ function assignDoublesMatches(players, partnerHistory, opponentHistory, recentMa
               teamA, teamB, partnerHistory, opponentHistory, recentMatches, currentMatchIndex
             );
             
-            if (score > bestScore) {
-              bestScore = score;
-              bestMatch = { teamA, teamB };
-            }
+            candidates.push({ teamA, teamB, score });
           }
         }
       }
     }
     
-    if (bestMatch) {
-      assignments.push(bestMatch);
-      bestMatch.teamA.forEach(p => used.add(p));
-      bestMatch.teamB.forEach(p => used.add(p));
-    }
+    if (candidates.length === 0) break;
+    
+    // Find the best score
+    const bestScore = Math.max(...candidates.map(c => c.score));
+    
+    // Get all candidates within 10 points of the best score (for tie-breaking)
+    const tieBreakThreshold = 10;
+    const topCandidates = candidates.filter(c => c.score >= bestScore - tieBreakThreshold);
+    
+    // Randomly select from top candidates to add variety
+    const selectedMatch = topCandidates[Math.floor(Math.random() * topCandidates.length)];
+    
+    console.log(`[assignDoublesMatches] Court ${court + 1}: ${candidates.length} combinations, ${topCandidates.length} within threshold, selected score: ${selectedMatch.score.toFixed(1)}`);
+    
+    assignments.push({
+      teamA: selectedMatch.teamA,
+      teamB: selectedMatch.teamB
+    });
+    
+    selectedMatch.teamA.forEach(p => used.add(p));
+    selectedMatch.teamB.forEach(p => used.add(p));
   }
   
   return assignments;
