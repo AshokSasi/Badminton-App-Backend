@@ -353,17 +353,25 @@ function assignSinglesMatches(players, opponentHistory, recentMatches, currentMa
     
     if (candidates.length === 0) break;
     
+    // Add small random jitter to each score to ensure variety even when identical
+    candidates.forEach(c => {
+      c.score += Math.random() * 5; // Small random boost 0-5 points
+    });
+    
     // Find the best score
     const bestScore = Math.max(...candidates.map(c => c.score));
+    const worstScore = Math.min(...candidates.map(c => c.score));
     
-    // Get all candidates within 10 points of the best score (for tie-breaking)
-    const tieBreakThreshold = 10;
+    // Get all candidates within threshold of the best score
+    // Use adaptive threshold: larger when score variance is low
+    const scoreRange = bestScore - worstScore;
+    const tieBreakThreshold = scoreRange < 20 ? 50 : 20;
     const topCandidates = candidates.filter(c => c.score >= bestScore - tieBreakThreshold);
     
     // Randomly select from top candidates to add variety
     const selectedPair = topCandidates[Math.floor(Math.random() * topCandidates.length)];
     
-    console.log(`[assignSinglesMatches] Court ${court + 1}: ${candidates.length} pairs, ${topCandidates.length} within threshold, selected score: ${selectedPair.score.toFixed(1)}`);
+    console.log(`[assignSinglesMatches] Court ${court + 1}: ${candidates.length} pairs, scores range ${worstScore.toFixed(1)}-${bestScore.toFixed(1)}, ${topCandidates.length} candidates, picked score: ${selectedPair.score.toFixed(1)}`);
     
     assignments.push({
       teamA: [selectedPair.pair[0]],
@@ -416,17 +424,26 @@ function assignDoublesMatches(players, partnerHistory, opponentHistory, recentMa
     
     if (candidates.length === 0) break;
     
+    // Add small random jitter to each score to ensure variety even when identical
+    candidates.forEach(c => {
+      c.score += Math.random() * 5; // Small random boost 0-5 points
+    });
+    
     // Find the best score
     const bestScore = Math.max(...candidates.map(c => c.score));
+    const worstScore = Math.min(...candidates.map(c => c.score));
     
-    // Get all candidates within 10 points of the best score (for tie-breaking)
-    const tieBreakThreshold = 10;
+    // Get all candidates within threshold of the best score
+    // Use adaptive threshold: larger when score variance is low
+    const scoreRange = bestScore - worstScore;
+    const tieBreakThreshold = scoreRange < 20 ? 50 : 20;
     const topCandidates = candidates.filter(c => c.score >= bestScore - tieBreakThreshold);
     
     // Randomly select from top candidates to add variety
     const selectedMatch = topCandidates[Math.floor(Math.random() * topCandidates.length)];
     
-    console.log(`[assignDoublesMatches] Court ${court + 1}: ${candidates.length} combinations, ${topCandidates.length} within threshold, selected score: ${selectedMatch.score.toFixed(1)}`);
+    console.log(`[assignDoublesMatches] Court ${court + 1}: ${candidates.length} combinations, scores range ${worstScore.toFixed(1)}-${bestScore.toFixed(1)}, ${topCandidates.length} candidates selected, picked score: ${selectedMatch.score.toFixed(1)}`);
+    console.log(`[assignDoublesMatches] Selected: [${selectedMatch.teamA.join(',')}] vs [${selectedMatch.teamB.join(',')}]`);
     
     assignments.push({
       teamA: selectedMatch.teamA,
