@@ -81,11 +81,11 @@ exports.generateMatch = async (req, res) => {
       });
     }
     
-    // SMART PLAYER ASSIGNMENT - Build history from past matches
-    console.log(`[generateMatch] Building player history for session ${session_id}`);
+    // SIMPLE RANDOM ASSIGNMENT - Just avoid repeating the previous match
+    console.log(`[generateMatch] Getting last match to avoid repeats`);
     
-    // Get all previous matches in this session
-    const previousMatches = await Matches.findAll({
+    // Get only the most recent match to avoid repeating it
+    const lastMatch = await Matches.findOne({
       where: { session_id },
       include: [{
         model: MatchCourts,
@@ -99,89 +99,29 @@ exports.generateMatch = async (req, res) => {
           }]
         }]
       }],
-      order: [['id', 'ASC']],
+      order: [['id', 'DESC']],
+      limit: 1,
       transaction: t
     });
     
-    console.log(`[generateMatch] Found ${previousMatches.length} previous matches`);
+    let previousTeams = null;
+    if (lastMatch && lastMatch.courts && lastMatch.courts.length > 0) {
+      const court = lastMatch.courts[0];
+      const teamA = court.teams.find(t => t.team === 'A')?.players.map(p => p.user_id).sort() || [];
+      const teamB = court.teams.find(t => t.team === 'B')?.players.map(p => p.user_id).sort() || [];
+      previousTeams = { teamA, teamB };
+      console.log(`[generateMatch] Previous match teams: [${teamA}] vs [${teamB}]`);
+    }
     
-    // Initialize tracking structures
-    const playerStats = {};
-    const partnerHistory = {};
-    const opponentHistory = {};
-    const recentMatches = {};
-    
-    // Initialize stats for all eligible players
-    eligiblePlayers.forEach(ep => {
-      const playerId = ep.player_id;
-      playerStats[playerId] = {
-        matchesPlayed: 0,
-        lastMatchIndex: -1
-      };
-      partnerHistory[playerId] = {};
-      opponentHistory[playerId] = {};
-      recentMatches[playerId] = [];
-    });
-    
-    // Build history from previous matches
-    previousMatches.forEach((match, matchIndex) => {
-      match.courts.forEach(court => {
-        const teamAPlayers = court.teams.find(t => t.team === 'A')?.players.map(p => p.user_id) || [];
-        const teamBPlayers = court.teams.find(t => t.team === 'B')?.players.map(p => p.user_id) || [];
-        const allCourtPlayers = [...teamAPlayers, ...teamBPlayers];
-        
-        // Update player stats
-        allCourtPlayers.forEach(playerId => {
-          if (playerStats[playerId]) {
-            playerStats[playerId].matchesPlayed++;
-            playerStats[playerId].lastMatchIndex = matchIndex;
-            recentMatches[playerId].push(matchIndex);
-          }
-        });
-        
-        // Track partners (same team)
-        [teamAPlayers, teamBPlayers].forEach(team => {
-          for (let i = 0; i < team.length; i++) {
-            for (let j = i + 1; j < team.length; j++) {
-              const p1 = team[i];
-              const p2 = team[j];
-              if (partnerHistory[p1] && partnerHistory[p2]) {
-                partnerHistory[p1][p2] = (partnerHistory[p1][p2] || 0) + 1;
-                partnerHistory[p2][p1] = (partnerHistory[p2][p1] || 0) + 1;
-              }
-            }
-          }
-        });
-        
-        // Track opponents (different teams)
-        teamAPlayers.forEach(p1 => {
-          teamBPlayers.forEach(p2 => {
-            if (opponentHistory[p1] && opponentHistory[p2]) {
-              opponentHistory[p1][p2] = (opponentHistory[p1][p2] || 0) + 1;
-              opponentHistory[p2][p1] = (opponentHistory[p2][p1] || 0) + 1;
-            }
-          });
-        });
-      });
-    });
-    
-    console.log(`[generateMatch] Player stats:`, Object.keys(playerStats).map(id => 
-      `Player ${id}: ${playerStats[id].matchesPlayed} matches`
-    ).join(', '));
-    
-    // Use smart assignment algorithm
-    const assignedPlayers = smartPlayerAssignment(
+    // Use simple random assignment
+    const assignedPlayers = randomPlayerAssignment(
       eligiblePlayers,
-      playerStats,
-      partnerHistory,
-      opponentHistory,
-      recentMatches,
-      previousMatches.length,
+      previousTeams,
       actualCourts,
       matchType
     );
     
-    console.log(`[generateMatch] Smart assignment completed with ${assignedPlayers.length} courts`);
+    console.log(`[generateMatch] Random assignment completed with ${assignedPlayers.length} courts`);
     
     // Log assigned players for each court
     assignedPlayers.forEach((assignment, index) => {
@@ -289,236 +229,80 @@ exports.generateMatch = async (req, res) => {
 };
 
 /**
- * Smart player assignment algorithm
- * Considers: play time balance, partner diversity, opponent diversity, recent pairings
+ * Simple random player assignment
+ * Randomly shuffles players and assigns them to teams
+ * Only rule: avoid exact same matchup as previous match
  */
-function smartPlayerAssignment(eligiblePlayers, playerStats, partnerHistory, opponentHistory, recentMatches, currentMatchIndex, courtsNeeded, matchType) {
+function randomPlayerAssignment(eligiblePlayers, previousTeams, courtsNeeded, matchType) {
   const playersPerCourt = matchType === 'doubles' ? 4 : 2;
   const playersPerTeam = matchType === 'doubles' ? 2 : 1;
   const totalPlayersNeeded = courtsNeeded * playersPerCourt;
   
-  // Sort players by priority (fewer matches played = higher priority)
-  const sortedPlayers = [...eligiblePlayers].sort((a, b) => {
-    const aStats = playerStats[a.player_id];
-    const bStats = playerStats[b.player_id];
+  // Get player IDs and shuffle them randomly
+  const playerIds = eligiblePlayers.map(ep => ep.player_id);
+  
+  const assignments = [];
+  const maxRetries = 10; // Avoid infinite loop
+  let attempts = 0;
+  
+  while (attempts < maxRetries) {
+    attempts++;
     
-    // Primary: fewer matches played
-    if (aStats.matchesPlayed !== bStats.matchesPlayed) {
-      return aStats.matchesPlayed - bStats.matchesPlayed;
+    // Shuffle players randomly
+    const shuffled = [...playerIds].sort(() => Math.random() - 0.5);
+    const selectedPlayers = shuffled.slice(0, totalPlayersNeeded);
+    
+    // Assign to courts
+    const currentAssignments = [];
+    for (let court = 0; court < courtsNeeded; court++) {
+      const startIdx = court * playersPerCourt;
+      const courtPlayers = selectedPlayers.slice(startIdx, startIdx + playersPerCourt);
+      
+      const teamA = courtPlayers.slice(0, playersPerTeam).sort();
+      const teamB = courtPlayers.slice(playersPerTeam).sort();
+      
+      currentAssignments.push({ teamA, teamB });
     }
     
-    // Secondary: played less recently
-    return aStats.lastMatchIndex - bStats.lastMatchIndex;
-  });
-  
-  // Select players for this round
-  const selectedPlayers = sortedPlayers.slice(0, totalPlayersNeeded).map(ep => ep.player_id);
-  
-  console.log(`[smartPlayerAssignment] Selected ${selectedPlayers.length} players for ${courtsNeeded} courts`);
-  
-  // For singles, simple pairing with opponent diversity consideration
-  if (matchType === 'singles') {
-    return assignSinglesMatches(selectedPlayers, opponentHistory, recentMatches, currentMatchIndex, courtsNeeded);
-  }
-  
-  // For doubles, complex assignment considering partnerships and opponents
-  return assignDoublesMatches(selectedPlayers, partnerHistory, opponentHistory, recentMatches, currentMatchIndex, courtsNeeded);
-}
-
-/**
- * Assign players for singles matches
- * Prioritizes opponent diversity and avoids recent opponents
- * Uses randomization for tie-breaking to ensure variety
- */
-function assignSinglesMatches(players, opponentHistory, recentMatches, currentMatchIndex, courtsNeeded) {
-  const assignments = [];
-  const used = new Set();
-  
-  for (let court = 0; court < courtsNeeded && used.size < players.length - 1; court++) {
-    const candidates = [];
-    
-    // Try all possible pairs and collect all with their scores
-    for (let i = 0; i < players.length; i++) {
-      if (used.has(players[i])) continue;
+    // Check if this matches the previous match (only for first court)
+    if (previousTeams && currentAssignments.length > 0) {
+      const current = currentAssignments[0];
+      const isSameMatchup = 
+        JSON.stringify(current.teamA) === JSON.stringify(previousTeams.teamA) &&
+        JSON.stringify(current.teamB) === JSON.stringify(previousTeams.teamB);
       
-      for (let j = i + 1; j < players.length; j++) {
-        if (used.has(players[j])) continue;
-        
-        const p1 = players[i], p2 = players[j];
-        const score = calculateOpponentScore(p1, p2, opponentHistory, recentMatches, currentMatchIndex);
-        
-        candidates.push({ pair: [p1, p2], score });
+      const isReversedMatchup =
+        JSON.stringify(current.teamA) === JSON.stringify(previousTeams.teamB) &&
+        JSON.stringify(current.teamB) === JSON.stringify(previousTeams.teamA);
+      
+      if (isSameMatchup || isReversedMatchup) {
+        console.log(`[randomPlayerAssignment] Attempt ${attempts}: Same as previous match, reshuffling...`);
+        continue; // Try again
       }
     }
     
-    if (candidates.length === 0) break;
-    
-    // Add small random jitter to each score to ensure variety even when identical
-    candidates.forEach(c => {
-      c.score += Math.random() * 5; // Small random boost 0-5 points
-    });
-    
-    // Find the best score
-    const bestScore = Math.max(...candidates.map(c => c.score));
-    const worstScore = Math.min(...candidates.map(c => c.score));
-    
-    // Get all candidates within threshold of the best score
-    // Use adaptive threshold: larger when score variance is low
-    const scoreRange = bestScore - worstScore;
-    const tieBreakThreshold = scoreRange < 20 ? 50 : 20;
-    const topCandidates = candidates.filter(c => c.score >= bestScore - tieBreakThreshold);
-    
-    // Randomly select from top candidates to add variety
-    const selectedPair = topCandidates[Math.floor(Math.random() * topCandidates.length)];
-    
-    console.log(`[assignSinglesMatches] Court ${court + 1}: ${candidates.length} pairs, scores range ${worstScore.toFixed(1)}-${bestScore.toFixed(1)}, ${topCandidates.length} candidates, picked score: ${selectedPair.score.toFixed(1)}`);
-    
-    assignments.push({
-      teamA: [selectedPair.pair[0]],
-      teamB: [selectedPair.pair[1]]
-    });
-    used.add(selectedPair.pair[0]);
-    used.add(selectedPair.pair[1]);
+    // Success! Use this assignment
+    console.log(`[randomPlayerAssignment] Assignment successful on attempt ${attempts}`);
+    return currentAssignments;
   }
   
-  return assignments;
-}
-
-/**
- * Assign players for doubles matches
- * Prioritizes partner diversity, opponent diversity, and avoids recent pairings
- * Uses randomization for tie-breaking to ensure variety
- */
-function assignDoublesMatches(players, partnerHistory, opponentHistory, recentMatches, currentMatchIndex, courtsNeeded) {
-  const assignments = [];
-  const used = new Set();
+  // If we couldn't avoid the previous match after max retries, just return the last attempt
+  console.log(`[randomPlayerAssignment] Max retries reached, using last attempt`);
+  const shuffled = [...playerIds].sort(() => Math.random() - 0.5);
+  const selectedPlayers = shuffled.slice(0, totalPlayersNeeded);
   
-  for (let court = 0; court < courtsNeeded && used.size <= players.length - 4; court++) {
-    const candidates = [];
+  const finalAssignments = [];
+  for (let court = 0; court < courtsNeeded; court++) {
+    const startIdx = court * playersPerCourt;
+    const courtPlayers = selectedPlayers.slice(startIdx, startIdx + playersPerCourt);
     
-    // Try different team combinations and collect all with their scores
-    for (let i = 0; i < players.length - 3; i++) {
-      if (used.has(players[i])) continue;
-      
-      for (let j = i + 1; j < players.length - 2; j++) {
-        if (used.has(players[j])) continue;
-        
-        for (let k = i + 1; k < players.length - 1; k++) {
-          if (used.has(players[k]) || k === j) continue;
-          
-          for (let l = k + 1; l < players.length; l++) {
-            if (used.has(players[l]) || l === j) continue;
-            
-            const teamA = [players[i], players[j]];
-            const teamB = [players[k], players[l]];
-            
-            const score = calculateDoublesMatchScore(
-              teamA, teamB, partnerHistory, opponentHistory, recentMatches, currentMatchIndex
-            );
-            
-            candidates.push({ teamA, teamB, score });
-          }
-        }
-      }
-    }
+    const teamA = courtPlayers.slice(0, playersPerTeam);
+    const teamB = courtPlayers.slice(playersPerTeam);
     
-    if (candidates.length === 0) break;
-    
-    // Add small random jitter to each score to ensure variety even when identical
-    candidates.forEach(c => {
-      c.score += Math.random() * 5; // Small random boost 0-5 points
-    });
-    
-    // Find the best score
-    const bestScore = Math.max(...candidates.map(c => c.score));
-    const worstScore = Math.min(...candidates.map(c => c.score));
-    
-    // Get all candidates within threshold of the best score
-    // Use adaptive threshold: larger when score variance is low
-    const scoreRange = bestScore - worstScore;
-    const tieBreakThreshold = scoreRange < 20 ? 50 : 20;
-    const topCandidates = candidates.filter(c => c.score >= bestScore - tieBreakThreshold);
-    
-    // Randomly select from top candidates to add variety
-    const selectedMatch = topCandidates[Math.floor(Math.random() * topCandidates.length)];
-    
-    console.log(`[assignDoublesMatches] Court ${court + 1}: ${candidates.length} combinations, scores range ${worstScore.toFixed(1)}-${bestScore.toFixed(1)}, ${topCandidates.length} candidates selected, picked score: ${selectedMatch.score.toFixed(1)}`);
-    console.log(`[assignDoublesMatches] Selected: [${selectedMatch.teamA.join(',')}] vs [${selectedMatch.teamB.join(',')}]`);
-    
-    assignments.push({
-      teamA: selectedMatch.teamA,
-      teamB: selectedMatch.teamB
-    });
-    
-    selectedMatch.teamA.forEach(p => used.add(p));
-    selectedMatch.teamB.forEach(p => used.add(p));
+    finalAssignments.push({ teamA, teamB });
   }
   
-  return assignments;
-}
-
-/**
- * Calculate score for an opponent pairing (higher = better match)
- */
-function calculateOpponentScore(p1, p2, opponentHistory, recentMatches, currentMatchIndex) {
-  let score = 100;
-  
-  // Penalize if they've played against each other before
-  const timesPlayed = opponentHistory[p1]?.[p2] || 0;
-  score -= timesPlayed * 20;
-  
-  // Heavy penalty if they played against each other recently
-  const p1Recent = recentMatches[p1] || [];
-  const p2Recent = recentMatches[p2] || [];
-  const playedRecently = p1Recent.some(idx => Math.abs(idx - currentMatchIndex) <= 1) &&
-                         p2Recent.some(idx => Math.abs(idx - currentMatchIndex) <= 1);
-  if (playedRecently && timesPlayed > 0) {
-    score -= 50;
-  }
-  
-  return score;
-}
-
-/**
- * Calculate score for a doubles match (higher = better match)
- */
-function calculateDoublesMatchScore(teamA, teamB, partnerHistory, opponentHistory, recentMatches, currentMatchIndex) {
-  let score = 100;
-  
-  // Partner diversity within teams - MUCH HIGHER PENALTY for repeated partners
-  const teamAPartnerCount = partnerHistory[teamA[0]]?.[teamA[1]] || 0;
-  const teamBPartnerCount = partnerHistory[teamB[0]]?.[teamB[1]] || 0;
-  score -= (teamAPartnerCount + teamBPartnerCount) * 40; // Increased from 15 to 40
-  
-  // Exponential penalty for playing with same partner multiple times
-  if (teamAPartnerCount >= 2) score -= teamAPartnerCount * 30;
-  if (teamBPartnerCount >= 2) score -= teamBPartnerCount * 30;
-  
-  // Opponent diversity across teams - HIGHER PENALTY
-  let opponentCount = 0;
-  teamA.forEach(p1 => {
-    teamB.forEach(p2 => {
-      opponentCount += opponentHistory[p1]?.[p2] || 0;
-    });
-  });
-  score -= opponentCount * 25; // Increased from 10 to 25
-  
-  // SEVERE penalty for recent pairings (partners or opponents)
-  const allPlayers = [...teamA, ...teamB];
-  const allPlayedRecently = allPlayers.every(p => {
-    const recent = recentMatches[p] || [];
-    return recent.some(idx => Math.abs(idx - currentMatchIndex) <= 1);
-  });
-  
-  if (allPlayedRecently && (teamAPartnerCount > 0 || teamBPartnerCount > 0 || opponentCount > 0)) {
-    score -= 100; // Increased from 40 to 100
-  }
-  
-  // Bonus for new pairings (never played together)
-  if (teamAPartnerCount === 0) score += 50;
-  if (teamBPartnerCount === 0) score += 50;
-  
-  return score;
+  return finalAssignments;
 }
 
 /**
