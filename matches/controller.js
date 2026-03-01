@@ -482,6 +482,229 @@ exports.endMatch = async (req, res) => {
 };
 
 /**
+ * POST /matches/:id/remake
+ * Regenerate team assignments for a match without ending it
+ * Useful when users want to shuffle teams before playing
+ * 
+ * Response: { success, data: { match_id, courts } }
+ */
+exports.remakeMatch = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const { id } = req.params;
+    
+    console.log(`[remakeMatch] Remaking match ${id}`);
+    
+    // Find the match
+    const match = await Matches.findByPk(id, {
+      include: [{
+        model: MatchCourts,
+        as: 'courts',
+        include: [{
+          model: MatchTeams,
+          as: 'teams',
+          include: [{
+            model: MatchTeamPlayers,
+            as: 'players'
+          }]
+        }]
+      }],
+      transaction: t
+    });
+    
+    if (!match) {
+      await t.rollback();
+      return res.status(404).json({ success: false, error: 'Match not found' });
+    }
+    
+    // Don't allow remaking if match is already ended
+    if (match.ended_at) {
+      await t.rollback();
+      return res.status(400).json({ success: false, error: 'Cannot remake an ended match' });
+    }
+    
+    const session_id = match.session_id;
+    const matchType = match.match_type;
+    const courtsNeeded = match.courts.length;
+    
+    console.log(`[remakeMatch] Match details - Session: ${session_id}, Type: ${matchType}, Courts: ${courtsNeeded}`);
+    
+    // Get all player IDs from the current match
+    const currentPlayerIds = new Set();
+    match.courts.forEach(court => {
+      court.teams.forEach(team => {
+        team.players.forEach(player => {
+          currentPlayerIds.add(player.user_id);
+        });
+      });
+    });
+    
+    console.log(`[remakeMatch] Current match has ${currentPlayerIds.size} players: [${Array.from(currentPlayerIds).join(', ')}]`);
+    
+    // Get eligible players (those currently in the match)
+    const eligiblePlayers = await SessionPlayers.findAll({
+      where: {
+        session_id,
+        player_id: { [Op.in]: Array.from(currentPlayerIds) },
+        left_at: null
+      },
+      include: [{
+        model: User,
+        as: 'player',
+        attributes: ['id', 'name', 'email']
+      }],
+      transaction: t
+    });
+    
+    console.log(`[remakeMatch] Found ${eligiblePlayers.length} eligible players still in session`);
+    
+    // Get the previous match to avoid repeating it
+    const previousMatch = await Matches.findOne({
+      where: { 
+        session_id,
+        id: { [Op.lt]: id } // Get match before this one
+      },
+      include: [{
+        model: MatchCourts,
+        as: 'courts',
+        include: [{
+          model: MatchTeams,
+          as: 'teams',
+          include: [{
+            model: MatchTeamPlayers,
+            as: 'players'
+          }]
+        }]
+      }],
+      order: [['id', 'DESC']],
+      limit: 1,
+      transaction: t
+    });
+    
+    let previousTeams = null;
+    if (previousMatch && previousMatch.courts && previousMatch.courts.length > 0) {
+      const court = previousMatch.courts[0];
+      const teamA = court.teams.find(t => t.team === 'A')?.players.map(p => p.user_id).sort() || [];
+      const teamB = court.teams.find(t => t.team === 'B')?.players.map(p => p.user_id).sort() || [];
+      previousTeams = { teamA, teamB };
+      console.log(`[remakeMatch] Previous match teams: [${teamA}] vs [${teamB}]`);
+    }
+    
+    // Delete existing court/team/player assignments
+    console.log(`[remakeMatch] Deleting existing assignments`);
+    
+    // Get all court IDs to delete related data
+    const courtIds = match.courts.map(c => c.id);
+    const teamIds = [];
+    match.courts.forEach(court => {
+      court.teams.forEach(team => {
+        teamIds.push(team.id);
+      });
+    });
+    
+    // Delete in correct order (foreign key constraints)
+    await MatchTeamPlayers.destroy({
+      where: { match_team_id: { [Op.in]: teamIds } },
+      transaction: t
+    });
+    
+    await MatchTeams.destroy({
+      where: { match_court_id: { [Op.in]: courtIds } },
+      transaction: t
+    });
+    
+    await MatchCourts.destroy({
+      where: { match_id: id },
+      transaction: t
+    });
+    
+    console.log(`[remakeMatch] Old assignments deleted`);
+    
+    // Generate new random assignments
+    const assignedPlayers = randomPlayerAssignment(
+      eligiblePlayers,
+      previousTeams,
+      courtsNeeded,
+      matchType
+    );
+    
+    console.log(`[remakeMatch] New random assignment generated`);
+    
+    // Create new courts, teams, and player assignments
+    const courtsData = [];
+    
+    for (let courtNum = 1; courtNum <= courtsNeeded; courtNum++) {
+      // Create court
+      const court = await MatchCourts.create({
+        match_id: match.id,
+        court_number: courtNum,
+        court_type: matchType
+      }, { transaction: t });
+      
+      // Create Team A
+      const teamA = await MatchTeams.create({
+        match_court_id: court.id,
+        team: 'A',
+        won: null
+      }, { transaction: t });
+      
+      // Create Team B
+      const teamB = await MatchTeams.create({
+        match_court_id: court.id,
+        team: 'B',
+        won: null
+      }, { transaction: t });
+      
+      // Get assigned players for this court
+      const courtAssignment = assignedPlayers[courtNum - 1];
+      
+      // Assign players to Team A
+      for (const playerId of courtAssignment.teamA) {
+        await MatchTeamPlayers.create({
+          match_team_id: teamA.id,
+          user_id: playerId
+        }, { transaction: t });
+      }
+      
+      // Assign players to Team B
+      for (const playerId of courtAssignment.teamB) {
+        await MatchTeamPlayers.create({
+          match_team_id: teamB.id,
+          user_id: playerId
+        }, { transaction: t });
+      }
+      
+      courtsData.push({
+        court_number: courtNum,
+        court_type: matchType,
+        teamA: courtAssignment.teamA,
+        teamB: courtAssignment.teamB
+      });
+      
+      console.log(`[remakeMatch] Court ${courtNum} - Team A: [${courtAssignment.teamA.join(',')}], Team B: [${courtAssignment.teamB.join(',')}]`);
+    }
+    
+    await t.commit();
+    console.log(`[remakeMatch] Match ${id} remade successfully`);
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        match_id: match.id,
+        session_id: match.session_id,
+        match_type: match.match_type,
+        courts: courtsData
+      }
+    });
+    
+  } catch (err) {
+    console.error(`[remakeMatch] Error: ${err.message}`, err);
+    await t.rollback();
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+/**
  * GET /matches/:sessionId
  * List all matches for a session
  * 

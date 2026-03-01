@@ -8,6 +8,9 @@ router.post('/generate', requireAuth, MatchController.generateMatch);
 // End a match
 router.post('/:id/end', requireAuth, MatchController.endMatch);
 
+// Remake a match (regenerate teams without ending it)
+router.post('/:id/remake', requireAuth, MatchController.remakeMatch);
+
 // Get all matches for a session
 router.get('/session/:sessionId', requireAuth, MatchController.getSessionMatches);
 
